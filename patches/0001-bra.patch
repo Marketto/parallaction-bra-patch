@@ -337,10 +337,10 @@ index 116cd4c5..ab6fccc6 100644
  	/**
 diff --git a/engines/parallaction/autotest.cpp b/engines/parallaction/autotest.cpp
 new file mode 100644
-index 00000000..5087ba3e
+index 00000000..fcdc2f38
 --- /dev/null
 +++ b/engines/parallaction/autotest.cpp
-@@ -0,0 +1,851 @@
+@@ -0,0 +1,860 @@
 +/* ScummVM - Graphic Adventure Engine
 + *
 + * ScummVM is the legal property of its developers, whose names
@@ -839,11 +839,20 @@ index 00000000..5087ba3e
 +			if (_vm->_char._ani && _vm->_char._ani->gfxobj)
 +				_vm->_char._ani->getFoot(foot);
 +			_vm->_gfx->getScrollPos(scroll);
-+			debug("AutoTest: state mode %d held %u items %d char %s flags %x location %s foot %d,%d scroll %d hover %s mouse %d cursor %d", _vm->_input->_inputMode,
++			Common::String fol("-");
++			bool folFound = false;
++			if (_vm->getGameType() == GType_BRA) {
++				Parallaction_br *br = (Parallaction_br *)_vm;
++				if (!br->followerName().empty())
++					fol = br->followerName();
++				folFound = (bool)br->_follower;
++			}
++			debug("AutoTest: state mode %d held %u items %d char %s flags %x location %s foot %d,%d scroll %d hover %s mouse %d cursor %d follower %s%s", _vm->_input->_inputMode,
 +				(_vm->_input->_activeItem._id >> 16) & 0xFFFF,
 +				_vm->_inventory ? _vm->_inventory->getNumItems() : -1, _vm->_char.getName(), g_engineFlags,
 +				_vm->_location._name, foot.x, foot.y, scroll.x, _vm->_input->hoverZoneName(),
-+				(int)_vm->_input->getMouseState(), CursorMan.isVisible() ? 1 : 0);
++				(int)_vm->_input->getMouseState(), CursorMan.isVisible() ? 1 : 0,
++				fol.c_str(), folFound ? "" : " (none)");
 +		} else if (c == "mouseon") {
 +			// a jump out of a cutscene (loc) can leave the mouse disabled by its OFFMOUSE
 +			_vm->_input->setMouseState(MOUSE_ENABLED_SHOW);
@@ -13170,7 +13179,7 @@ index 9d8a504d..ffa0232b 100644
  	Common::TextToSpeechManager *ttsMan = g_system->getTextToSpeechManager();
  	if (ttsMan != nullptr && ConfMan.getBool("tts_enabled") && ttsMan->isSpeaking()) {
 diff --git a/engines/parallaction/parallaction.h b/engines/parallaction/parallaction.h
-index abfeacc9..f8323f50 100644
+index abfeacc9..1afb63e5 100644
 --- a/engines/parallaction/parallaction.h
 +++ b/engines/parallaction/parallaction.h
 @@ -23,6 +23,10 @@
@@ -13488,7 +13497,7 @@ index abfeacc9..f8323f50 100644
  
  	void setupSubtitles(const char *s, const char *s2, int y);
  	void clearSubtitles();
-@@ -617,13 +835,27 @@ public:
+@@ -617,13 +835,28 @@ public:
  
  public:
  	bool	counterExists(const Common::String &name);
@@ -13504,6 +13513,7 @@ index abfeacc9..f8323f50 100644
  	void	setCounterValue(const Common::String &name, int value);
  
  	void	setFollower(const Common::String &name);
++	const Common::String &followerName() const { return _followerName; }
 +	void	setPartReached(int part);
 +	bool	_saveDisabled;		// OFFSAVE / ONSAVE
 +	int		_langIndex;			// 0 it, 1 fr, 2 en, 3 ge
@@ -13516,7 +13526,7 @@ index abfeacc9..f8323f50 100644
  	void	enableSfx(bool enable);
  	void	enableMusic(bool enable);
  
-@@ -640,6 +872,17 @@ public:
+@@ -640,6 +873,17 @@ public:
  	int			_subtitleY;
  	GfxObj		*_subtitle[2];
  	ZonePtr		_activeZone2;
@@ -13534,7 +13544,7 @@ index abfeacc9..f8323f50 100644
  	uint32		_zoneFlags[NUM_LOCATIONS][NUM_ZONES];
  
  private:
-@@ -674,9 +917,17 @@ private:
+@@ -674,9 +918,17 @@ private:
  	static const Callable _amigaCallables[6];
  
  	Common::String		_followerName;
@@ -13554,7 +13564,7 @@ index abfeacc9..f8323f50 100644
  	// dos callables
  	void _c_null(void *);
 diff --git a/engines/parallaction/parallaction_br.cpp b/engines/parallaction/parallaction_br.cpp
-index e27c9f2d..56746940 100644
+index e27c9f2d..a170d03b 100644
 --- a/engines/parallaction/parallaction_br.cpp
 +++ b/engines/parallaction/parallaction_br.cpp
 @@ -20,16 +20,25 @@
@@ -13866,14 +13876,14 @@ index e27c9f2d..56746940 100644
  
  	_cmdExec->run(_location._aCommands);
 +	armCreditsRoll();	// end titles of this location (loc/titoli.txt)
++
++	// The CD version (re)starts the location CD track here; MIDI music is
++	// controlled by the MUSIC commands of the scripts.
++	_soundManI->locationMusic();
  
 -	// NOTE: music should not started here!
 -	// TODO: implement the music commands which control music execution
 -	_soundMan->execute(SC_PLAYMUSIC);
-+	// The CD version (re)starts the location CD track here; MIDI music is
-+	// controlled by the MUSIC commands of the scripts.
-+	_soundManI->locationMusic();
-+
 +	if (_pendingLoad) {
 +		// a saved game was loaded while this location was being set up
 +		// (e.g. from the ScummVM menu during the location comment): keep
@@ -14290,7 +14300,41 @@ index e27c9f2d..56746940 100644
  void Parallaction_br::setFollower(const Common::String &name) {
  	if (name.empty()) {
  		_followerName.clear();
-@@ -591,6 +1088,18 @@ void Parallaction_br::restoreOrSaveZoneFlags(ZonePtr z, bool restore) {
+@@ -577,6 +1074,33 @@ void Parallaction_br::setFollower(const Common::String &name) {
+ 		_followerName = name;
+ 		_follower = _location.findAnimation(name.c_str());
+ 	}
++
++	// The character cannot follow itself. Games saved before the fix of the location CHARACTER
++	// (20/11/2026: two Dougs in part 4 after a SWAP) hold the character's own name as the follower:
++	// nothing was found and the real companion stood still where the location file put it, in every
++	// room. Follow the location's only other playable character (an animation flagged CHARACTER with
++	// an inventory); when there is not exactly one, nobody here and the name is kept for the next room.
++	if (!_followerName.empty() && !scumm_stricmp(_followerName.c_str(), _char.getName())) {
++		AnimationPtr found;
++		int n = 0;
++		for (AnimationList::iterator it = _location._animations.begin(); it != _location._animations.end(); ++it) {
++			AnimationPtr a = *it;
++			if (a == _char._ani || !(a->_flags & kFlagsCharacter) || !findInventory(a->_name))
++				continue;
++			if (!scumm_stricmp(a->_name, _char.getName()))
++				continue;
++			found = a;
++			n++;
++		}
++		debugC(1, kDebugExec, "setFollower(%s): the character itself, %s", _followerName.c_str(),
++			n == 1 ? found->_name : "no companion");
++		if (n == 1) {
++			_followerName = found->_name;
++			_follower = found;
++		} else {
++			_follower.reset();
++		}
++	}
+ }
+ 
+ void Parallaction_br::restoreOrSaveZoneFlags(ZonePtr z, bool restore) {
+@@ -591,6 +1115,18 @@ void Parallaction_br::restoreOrSaveZoneFlags(ZonePtr z, bool restore) {
  	}
  }
  
